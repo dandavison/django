@@ -28,13 +28,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import builtins
+import datetime
+import inspect
 import os
 import signal
 import subprocess
 import sys
 import time
 import traceback
+from collections import defaultdict
+from importlib import invalidate_caches
+from importlib import reload
 
+import networkx as nx
 from django.apps import apps
 from django.conf import settings
 from django.core.signals import request_finished
@@ -42,6 +49,41 @@ from django.utils import six
 from django.utils._os import npath
 from django.utils.encoding import get_system_encoding
 from django.utils.six.moves import _thread as thread
+from django.urls.base import clear_url_caches
+from django.utils.termcolors import colorize
+
+
+for col in ['red', 'green', 'blue']:
+    exec(f"""
+def {col}(s):
+    print(colorize(s, fg='{col}', opts=['bold']))
+""")
+
+
+__original_import__ = builtins.__import__
+_dependency_graph = defaultdict(set)
+
+
+def import_and_build_dependency_graph(name, *args, **kwargs):
+
+    child_module = __original_import__(name, *args, **kwargs)
+
+    if hasattr(child_module, '__file__'):
+        _dependency_graph[child_module.__file__].add(child_module.__name__)
+        caller = inspect.currentframe().f_back
+        parent_module_name = caller.f_globals.get('__name__')
+        _dependency_graph[child_module.__file__].add(parent_module_name)
+
+        if False and any(s in child_module.__name__ or
+               s in parent_module_name
+               for s in ['order_overview', 'describe_order', 'helpdesk.urls']):
+
+            blue(f'{parent_module_name} <- {child_module.__name__}')
+
+
+    return child_module
+
+
 
 # This import does nothing, but it's necessary to avoid some race conditions
 # in the threading module. See http://code.djangoproject.com/ticket/2330 .
@@ -159,8 +201,10 @@ def inotify_code_changed():
     """
     class EventHandler(pyinotify.ProcessEvent):
         modified_code = None
+        modified_file = None
 
         def process_default(self, event):
+            EventHandler.modified_file = event.path
             if event.path.endswith('.mo'):
                 EventHandler.modified_code = I18N_MODIFIED
             else:
@@ -198,7 +242,7 @@ def inotify_code_changed():
     notifier.stop()
 
     # If we are here the code must have changed.
-    return EventHandler.modified_code
+    return EventHandler.modified_code, EventHandler.modified_file
 
 
 def code_changed():
@@ -217,8 +261,10 @@ def code_changed():
                 del _error_files[_error_files.index(filename)]
             except ValueError:
                 pass
-            return I18N_MODIFIED if filename.endswith('.mo') else FILE_MODIFIED
-    return False
+            return ((I18N_MODIFIED, filename)
+                    if filename.endswith('.mo')
+                    else (FILE_MODIFIED, filename))
+    return False, None
 
 
 def check_errors(fn):
@@ -267,16 +313,49 @@ def ensure_echo_on():
                     signal.signal(signal.SIGTTOU, old_handler)
 
 
-def reloader_thread():
+def _reload(module):
+    try:
+        reload(module)
+    except Exception as ex:
+        print("%s: %s" % (ex.__class__.__name__, ex))
+
+
+def reloader_thread(options):
     ensure_echo_on()
     if USE_INOTIFY:
         fn = inotify_code_changed
     else:
         fn = code_changed
     while RUN_RELOADER:
-        change = fn()
+        change, path = fn()
         if change == FILE_MODIFIED:
-            sys.exit(3)  # force reload
+            print(blue(f'{datetime.datetime.now()}'))
+
+            if options['use_optimistic_reloader']:
+                invalidate_caches()
+                clear_url_caches()
+                red(f'>>> optimistic reload: {path} <<<')
+
+                if path in _dependency_graph:
+                    for module_name in _dependency_graph[path]:
+                        red(f'reload: {module_name}')
+                        _reload(sys.modules[module_name])
+                else:
+                    module_name = next((name for name, mod in sys.modules.items()
+                                        if hasattr(mod, '__file__')
+                                        and mod.__file__ == path), None)
+
+                    for module_name in [module_name,
+                                        'counsyl.product.helpdesk.views',
+                                        'counsyl.product.helpdesk.urls']:
+                        if module_name:
+                            green(f'reload: {module_name}')
+                            _reload(sys.modules[module_name])
+
+                print('done')
+            else:
+                sys.exit(3)  # force reload
+
         elif change == I18N_MODIFIED:
             reset_translations()
         time.sleep(1)
@@ -304,7 +383,7 @@ def python_reloader(main_func, args, kwargs):
     if os.environ.get("RUN_MAIN") == "true":
         thread.start_new_thread(main_func, args, kwargs)
         try:
-            reloader_thread()
+            reloader_thread(kwargs)
         except KeyboardInterrupt:
             pass
     else:

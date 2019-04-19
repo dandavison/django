@@ -51,6 +51,12 @@ class Command(BaseCommand):
             '--noreload', action='store_false', dest='use_reloader', default=True,
             help='Tells Django to NOT use the auto-reloader.',
         )
+        parser.add_argument(
+            '--reload-optimistically',
+            action='store_true', dest='use_optimistic_reloader', default=False,
+            help=('Tells Django to try to auto-reload without restarting. Note that this might '
+                  'not reload your code correctly.'),
+        )
 
     def execute(self, *args, **options):
         if options['no_color']:
@@ -103,7 +109,7 @@ class Command(BaseCommand):
         """
         Runs the server, using the autoreloader if needed
         """
-        use_reloader = options['use_reloader']
+        use_reloader = options['use_reloader'] or options['use_optimistic_reloader']
 
         if use_reloader:
             autoreload.main(self.inner_run, None, options)
@@ -120,11 +126,6 @@ class Command(BaseCommand):
         shutdown_message = options.get('shutdown_message', '')
         quit_command = 'CTRL-BREAK' if sys.platform == 'win32' else 'CONTROL-C'
 
-        self.stdout.write("Performing system checks...\n\n")
-        self.check(display_num_errors=True)
-        # Need to check migrations here, so can't use the
-        # requires_migrations_check attribute.
-        self.check_migrations()
         now = datetime.now().strftime('%B %d, %Y - %X')
         if six.PY2:
             now = now.decode(get_system_encoding())

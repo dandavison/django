@@ -16,6 +16,9 @@ def get_callable(lookup_view):
       import that callable and return it, otherwise raise an exception
       (ImportError or ViewDoesNotExist).
     """
+    from clint.textui import colored; blue = lambda s: colored.blue(s, bold=True)
+    print(blue(f'get_callable: {lookup_view}'))
+
     if callable(lookup_view):
         return lookup_view
 
