@@ -51,6 +51,12 @@ class Command(BaseCommand):
             '--noreload', action='store_false', dest='use_reloader', default=True,
             help='Tells Django to NOT use the auto-reloader.',
         )
+        parser.add_argument(
+            '--optimistic-reload',
+            action='store_true', dest='use_optimistic_reloader', default=False,
+            help=('Tells Django to try to auto-reload without restarting. Note that this might '
+                  'not reload your code correctly.'),
+        )
 
     def execute(self, *args, **options):
         if options['no_color']:
@@ -103,7 +109,7 @@ class Command(BaseCommand):
         """
         Runs the server, using the autoreloader if needed
         """
-        use_reloader = options['use_reloader']
+        use_reloader = options['use_reloader'] or options['use_optimistic_reloader']
 
         if use_reloader:
             autoreload.main(self.inner_run, None, options)

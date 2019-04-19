@@ -5,8 +5,10 @@ import pkgutil
 import sys
 from collections import OrderedDict, defaultdict
 from importlib import import_module
+from unittest.mock import patch
 
 import django
+import optimistic_reload
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -309,6 +311,8 @@ class ManagementUtility(object):
         except ImproperlyConfigured as exc:
             self.settings_exception = exc
 
+        runserver_with_optimistic_reload = False
+
         if settings.configured:
             # Start the auto-reloading dev server even if the code is broken.
             # The hardcoded condition is a code smell but we can't rely on a
@@ -332,6 +336,8 @@ class ManagementUtility(object):
                     _options, _args = _parser.parse_known_args(self.argv[2:])
                     for _arg in _args:
                         self.argv.remove(_arg)
+                if '--optimistic-reload' in self.argv:
+                    runserver_with_optimistic_reload = True
 
             # In all other cases, django.setup() is required to succeed.
             else:
@@ -352,6 +358,9 @@ class ManagementUtility(object):
             sys.stdout.write(django.get_version() + '\n')
         elif self.argv[1:] in (['--help'], ['-h']):
             sys.stdout.write(self.main_help_text() + '\n')
+        elif runserver_with_optimistic_reload:
+            with patch('builtins.__import__', optimistic_reload.import_and_build_dependency_graph):
+                self.fetch_command(subcommand).run_from_argv(self.argv)
         else:
             self.fetch_command(subcommand).run_from_argv(self.argv)
 

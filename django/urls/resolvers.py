@@ -394,14 +394,14 @@ class RegexURLResolver(LocaleRegexProvider):
             raise Resolver404({'tried': tried, 'path': new_path})
         raise Resolver404({'path': path})
 
-    @cached_property
+    @property
     def urlconf_module(self):
         if isinstance(self.urlconf_name, six.string_types):
             return import_module(self.urlconf_name)
         else:
             return self.urlconf_name
 
-    @cached_property
+    @property
     def url_patterns(self):
         # urlconf_module might be a valid set of patterns, so we default to it
         patterns = getattr(self.urlconf_module, "urlpatterns", self.urlconf_module)
