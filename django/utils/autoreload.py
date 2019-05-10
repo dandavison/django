@@ -39,6 +39,7 @@ import optimistic_reload
 from django.apps import apps
 from django.conf import settings
 from django.core.signals import request_finished
+from django.urls.base import clear_url_caches
 from django.utils import six
 from django.utils._os import npath
 from django.utils.encoding import get_system_encoding
@@ -271,6 +272,16 @@ def ensure_echo_on():
                     signal.signal(signal.SIGTTOU, old_handler)
 
 
+from django.utils.termcolors import colorize
+
+def red(s):
+    print(colorize(s, fg='red', opts=['bold']))
+
+
+class _ForceRestart(Exception):
+    pass
+
+
 def reloader_thread(options):
     ensure_echo_on()
     if USE_INOTIFY:
@@ -280,13 +291,26 @@ def reloader_thread(options):
     while RUN_RELOADER:
         change, path = fn()
         if change == FILE_MODIFIED:
-            if options['use_optimistic_reloader']:
-                module_name = next((name for name, module in sys.modules.items()
-                                    if hasattr(module, '__file__')
-                                    and module.__file__ == path))
-                optimistic_reload.reload(module_name)
-            else:
-                sys.exit(3)  # force reload
+            try:
+                if options['use_optimistic_reloader']:
+                    module_name = next((name for name, module in sys.modules.items()
+                                        if hasattr(module, '__file__')
+                                        and module.__file__ == path), None)
+                    if module_name:
+                        clear_url_caches()
+                        module = optimistic_reload.reload(module_name)
+                        if not module:
+                            print(red(f'autoreload: error in optimistic-reload: restarting'),
+                                  file=sys.stderr)
+                            raise _ForceRestart
+                    else:
+                        print(red(f'autoreload: not in sys.modules: {path}: restarting'),
+                              file=sys.stderr)
+                        raise _ForceRestart
+                else:
+                    raise _ForceRestart
+            except _ForceRestart:
+                sys.exit(3)
         elif change == I18N_MODIFIED:
             reset_translations()
         time.sleep(1)
