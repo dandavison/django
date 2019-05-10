@@ -9,8 +9,10 @@ from __future__ import unicode_literals
 
 import functools
 import re
+import sys
 import threading
 from importlib import import_module
+from importlib import reload
 
 from django.conf import settings
 from django.core.checks import Warning
@@ -397,7 +399,11 @@ class RegexURLResolver(LocaleRegexProvider):
     @property
     def urlconf_module(self):
         if isinstance(self.urlconf_name, six.string_types):
-            return import_module(self.urlconf_name)
+            module = sys.modules.get(self.urlconf_name)
+            if module:
+                return reload(module)
+            else:
+                return import_module(self.urlconf_name)
         else:
             return self.urlconf_name
 
