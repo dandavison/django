@@ -397,6 +397,8 @@ class RegexURLResolver(LocaleRegexProvider):
     @property
     def urlconf_module(self):
         if isinstance(self.urlconf_name, six.string_types):
+            import sys
+            sys.modules.pop(self.urlconf_name, None)
             return import_module(self.urlconf_name)
         else:
             return self.urlconf_name
