@@ -35,13 +35,17 @@ import sys
 import time
 import traceback
 
+import optimistic_reload
 from django.apps import apps
 from django.conf import settings
 from django.core.signals import request_finished
+from django.urls.base import clear_url_caches
 from django.utils import six
 from django.utils._os import npath
 from django.utils.encoding import get_system_encoding
 from django.utils.six.moves import _thread as thread
+from django.utils.termcolors import colorize
+
 
 # This import does nothing, but it's necessary to avoid some race conditions
 # in the threading module. See http://code.djangoproject.com/ticket/2330 .
@@ -159,8 +163,10 @@ def inotify_code_changed():
     """
     class EventHandler(pyinotify.ProcessEvent):
         modified_code = None
+        modified_file = None
 
         def process_default(self, event):
+            EventHandler.modified_file = event.path
             if event.path.endswith('.mo'):
                 EventHandler.modified_code = I18N_MODIFIED
             else:
@@ -198,7 +204,7 @@ def inotify_code_changed():
     notifier.stop()
 
     # If we are here the code must have changed.
-    return EventHandler.modified_code
+    return EventHandler.modified_code, EventHandler.modified_file
 
 
 def code_changed():
@@ -217,8 +223,9 @@ def code_changed():
                 del _error_files[_error_files.index(filename)]
             except ValueError:
                 pass
-            return I18N_MODIFIED if filename.endswith('.mo') else FILE_MODIFIED
-    return False
+            return (I18N_MODIFIED if filename.endswith('.mo') else FILE_MODIFIED,
+                    filename)
+    return False, None
 
 
 def check_errors(fn):
@@ -267,16 +274,43 @@ def ensure_echo_on():
                     signal.signal(signal.SIGTTOU, old_handler)
 
 
-def reloader_thread():
+class _ForceRestart(Exception):
+    pass
+
+
+def red(s):
+    print(colorize(s, fg='red', opts=['bold']))
+
+
+def reloader_thread(options):
     ensure_echo_on()
     if USE_INOTIFY:
         fn = inotify_code_changed
     else:
         fn = code_changed
     while RUN_RELOADER:
-        change = fn()
+        change, path = fn()
         if change == FILE_MODIFIED:
-            sys.exit(3)  # force reload
+            try:
+                if options['use_optimistic_reloader']:
+                    module_name = next((name for name, module in sys.modules.items()
+                                        if hasattr(module, '__file__')
+                                        and module.__file__ == path), None)
+                    if module_name:
+                        clear_url_caches()
+                        module = optimistic_reload.reload(module_name)
+                        if not module:
+                            print(red(f'autoreload: error in optimistic-reload: restarting'),
+                                  file=sys.stderr)
+                            raise _ForceRestart
+                    else:
+                        print(red(f'autoreload: not in sys.modules: {path}: restarting'),
+                              file=sys.stderr)
+                        raise _ForceRestart
+                else:
+                    raise _ForceRestart
+            except _ForceRestart:
+                sys.exit(3)
         elif change == I18N_MODIFIED:
             reset_translations()
         time.sleep(1)
@@ -304,7 +338,7 @@ def python_reloader(main_func, args, kwargs):
     if os.environ.get("RUN_MAIN") == "true":
         thread.start_new_thread(main_func, args, kwargs)
         try:
-            reloader_thread()
+            reloader_thread(kwargs)
         except KeyboardInterrupt:
             pass
     else:
