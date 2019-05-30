@@ -115,6 +115,8 @@ class Command(BaseCommand):
         # to be raised in the child process, raise it now.
         autoreload.raise_last_exception()
 
+        JupyterPythonKernelThread().start()
+
         threading = options['use_threading']
         # 'shutdown_message' is a stealth option.
         shutdown_message = options.get('shutdown_message', '')
@@ -168,3 +170,18 @@ class Command(BaseCommand):
 
 # Kept for backward compatibility
 BaseRunserverCommand = Command
+
+
+from unittest import mock
+from threading import Thread
+
+from ipykernel.embed import embed_kernel
+
+
+class JupyterPythonKernelThread(Thread):
+
+    def run(self):
+        # ValueError: signal only works in main thread
+        # https://github.com/ipython/ipython/issues/4032
+        with mock.patch('signal.signal'):
+            return embed_kernel(argv=[])
