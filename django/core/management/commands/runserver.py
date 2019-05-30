@@ -175,7 +175,7 @@ BaseRunserverCommand = Command
 from unittest import mock
 from threading import Thread
 
-from ipykernel.kernelapp import launch_new_instance
+from ipykernel.embed import embed_kernel
 
 
 class JupyterPythonKernelThread(Thread):
@@ -184,4 +184,4 @@ class JupyterPythonKernelThread(Thread):
         # ValueError: signal only works in main thread
         # https://github.com/ipython/ipython/issues/4032
         with mock.patch('signal.signal'):
-            return launch_new_instance(argv=[])
+            return embed_kernel(argv=[])
