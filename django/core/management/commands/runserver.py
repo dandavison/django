@@ -111,6 +111,19 @@ class Command(BaseCommand):
             self.inner_run(None, **options)
 
     def inner_run(self, *args, **options):
+        from threading import Thread
+        from ipykernel.embed import embed_kernel
+
+        runserver_command = self
+
+        class ServerThread(Thread):
+            def run(self):
+                runserver_command._inner_run(*args, **options)
+
+        ServerThread().start()
+        embed_kernel(argv=[])
+
+    def _inner_run(self, *args, **options):
         # If an exception was silenced in ManagementUtility.execute in order
         # to be raised in the child process, raise it now.
         autoreload.raise_last_exception()
